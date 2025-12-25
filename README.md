@@ -4,16 +4,16 @@
 
 This repository contains a comprehensive step-by-step guide and implementation to build Cronnx from scratch.
 
-## 🌟 Key Features
+## Key Features
 
-- **⚡ High Performance**: Low-latency inference using `ort` (ONNX Runtime bindings) and `ndarray`.
-- **🚀 Asynchronous Core**: Built on `tokio` and `axum` to handle thousands of concurrent connections.
-- **🚅 Dynamic Batching**: Automatically groups incoming requests into batches for efficient GPU/CPU utilization (simulating NVIDIA Triton features).
-- **🔀 Multi-Model Support**: Hot-swappable model registry supporting V1/V2 deployments and A/B testing.
-- **📊 Observability**: Built-in Prometheus metrics (`requests`, `latency`, `batch_size`) and structured tracing.
-- **🐳 Production Ready**: Dockerized with multi-stage builds and GPU support (CUDA).
+- **High Performance**: Low-latency inference using `ort` (ONNX Runtime bindings) and `ndarray`.
+- **Asynchronous Core**: Built on `tokio` and `axum` to handle thousands of concurrent connections.
+- **Dynamic Batching**: Automatically groups incoming requests into batches for efficient GPU/CPU utilization (simulating NVIDIA Triton features).
+- **Multi-Model Support**: Hot-swappable model registry supporting V1/V2 deployments and A/B testing.
+- **Observability**: Built-in Prometheus metrics (`requests`, `latency`, `batch_size`) and structured tracing.
+- **Production Ready**: Dockerized with multi-stage builds and GPU support (CUDA).
 
-## 📚 Implementation Guide
+## Implementation Guide
 
 The project is documented in 6 progressive phases. You can find the detailed implementation guides in the `docs/` directory:
 
@@ -26,7 +26,7 @@ The project is documented in 6 progressive phases. You can find the detailed imp
 | [**05_observability**](docs/05_observability.md) | **Metrics & Tracing**: Adding Prometheus metrics and structured logs.          | `tracing`, `metrics`      |
 | [**06_deployment**](docs/06_deployment.md)       | **Prod & GPU**: Dockerization and enabling CUDA acceleration.                  | `Docker`, `CUDA`          |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
