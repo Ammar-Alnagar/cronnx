@@ -71,7 +71,7 @@ The project is documented in 6 progressive phases. You can find the detailed imp
          -d "{\"image\": \"$IMAGE\"}"
     ```
 
-## 🛠 Project Structure
+##  Project Structure
 
 ```
 cronnx/
@@ -89,6 +89,6 @@ cronnx/
     └── preprocessing/  # Image resizing & normalization
 ```
 
-## 📄 License
+##  License
 
 MIT
