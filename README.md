@@ -2,7 +2,7 @@
 
 **Cronnx** is a high-performance, asynchronous Machine Learning inference server built in Rust. It demonstrates how to take a raw ONNX model and serve it via a robust HTTP API with features like dynamic batching, multi-model support, and production observability.
 
-## 🚀 Key Features
+## Key Features
 
 - **High Performance**: Low-latency inference using `ort` (ONNX Runtime bindings) and `ndarray`.
 - **Asynchronous Core**: Built on `tokio` and `axum` to handle thousands of concurrent connections.
@@ -11,7 +11,7 @@
 - **Observability**: Built-in Prometheus metrics (`requests`, `latency`, `batch_size`) and structured tracing.
 - **Production Ready**: Dockerized with multi-stage builds and GPU support (CUDA).
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -21,7 +21,7 @@
 - [Deployment](#deployment)
 - [Development](#development)
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph TD
@@ -44,7 +44,7 @@ graph TD
 4. **Preprocessing**: Image normalization using ImageNet statistics
 5. **Observability**: Metrics collection and structured logging
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -98,7 +98,7 @@ graph TD
     curl http://localhost:3000/metrics
     ```
 
-## 📡 API Reference
+## API Reference
 
 ### Health Check
 ```
@@ -137,7 +137,7 @@ GET /metrics
 ```
 Returns Prometheus-formatted metrics.
 
-## ⚙️ Configuration
+## Configuration
 
 The application is configured via `config.yaml`:
 
@@ -153,7 +153,7 @@ models:
     batch_timeout_ms: 10      # Batch timeout in milliseconds
 ```
 
-## 🧪 Testing
+## Testing
 
 Run the comprehensive test suite:
 
@@ -176,7 +176,7 @@ cargo test server
 - **Error Handling**: All error paths tested
 - **Concurrency**: Thread safety and async behavior
 
-## 🚢 Deployment
+## Deployment
 
 ### Docker
 
@@ -205,7 +205,7 @@ ort = { version = "2.0.0-rc.10", features = ["ndarray", "cuda"] }
 - Set up proper logging and monitoring
 - Use reverse proxy (nginx) for production deployments
 
-## 🛠️ Development
+## Development
 
 ### Project Structure
 
@@ -241,7 +241,7 @@ cargo fmt
 cargo clippy
 ```
 
-## 📊 Metrics
+## Metrics
 
 The following metrics are collected:
 
@@ -249,6 +249,6 @@ The following metrics are collected:
 - `request_latency_seconds` (histogram): Request processing time by model  
 - `batch_size` (histogram): Size of processed batches
 
-## 🏷️ License
+## License
 
 MIT

@@ -1,85 +1,147 @@
-# Crates Guide
+# Crates and Dependencies
 
-This document explains the key Rust crates (libraries) used in the **Cronnx** inference engine, why we chose them, and what role they play in the system.
+This document provides an overview of the external crates and dependencies used in the Cronnx project, along with their purposes and configuration.
 
-## Core Runtime
+## Core Dependencies
 
-### `tokio`
+### Web Framework
+- **axum**: 0.7.x
+  - Purpose: Modern, ergonomic web framework built on tokio
+  - Features: `["macros"]` for route macros
+  - Used for: HTTP server, routing, request/response handling
 
-- **Version**: `1.0` (features = `["full"]`)
-- **Role**: The Asynchronous Runtime.
-- **Why**: Tokio is the standard for async Rust. It provides the event loop, non-blocking I/O, timers, and channels (`mpsc`, `oneshot`) that power our high-concurrency architecture.
+- **tokio**: 1.0+
+  - Purpose: Asynchronous runtime for Rust
+  - Features: `["full"]` for complete async ecosystem
+  - Used for: Async/await support, task spawning, async channels
 
-### `axum`
+### Serialization
+- **serde**: 1.0+
+  - Purpose: Serialization/deserialization framework
+  - Features: `["derive"]` for derive macros
+  - Used for: JSON serialization, config parsing
 
-- **Version**: `0.7`
-- **Role**: Web Framework.
-- **Why**: Built by the Tokio team, Axum is ergonomic, modern, and fully compatible with the Tower ecosystem. It uses an extractor pattern (e.g., `Json`, `State`) that makes handlers type-safe and easy to test.
+- **serde_json**: 1.0+
+  - Purpose: JSON serialization support
+  - Used for: Request/response body parsing
 
-## Machine Learning & Math
+- **serde_yaml**: 0.9+
+  - Purpose: YAML serialization support
+  - Used for: Configuration file parsing
 
-### `ort`
+- **base64**: 0.21+
+  - Purpose: Base64 encoding/decoding
+  - Used for: Image data encoding in API requests
 
-- **Version**: `2.0`
-- **Role**: ONNX Runtime Bindings.
-- **Why**: Accesses Microsoft's ONNX Runtime (C++) SDK. This allows us to run standard `.onnx` models exported from PyTorch, TensorFlow, etc., with high performance and hardware acceleration (CUDA/TensorRT).
+### ML & Math
+- **ort**: 2.0.0-rc.10
+  - Purpose: ONNX Runtime bindings for Rust
+  - Features: `["ndarray"]` for ndarray integration
+  - Used for: Model loading, inference execution
+  - Optional features: `["cuda"]` for GPU acceleration
 
-### `ndarray`
+- **ndarray**: 0.15+
+  - Purpose: N-dimensional array library
+  - Used for: Tensor manipulation, mathematical operations
 
-- **Version**: `0.15`
-- **Role**: N-Dimensional Arrays (Tensors).
-- **Why**: The "NumPy of Rust". It provides the `Array4` type we use for image tensors. It handles memory layout (NCHW vs NHWC) and efficient slicing, used heavily during batching and preprocessing.
+### Image Processing
+- **image**: 0.24+
+  - Purpose: Image processing library
+  - Used for: Image loading, resizing, format conversion
+  - Supports: PNG, JPEG, GIF, and many other formats
 
-### `image`
+### Error Handling
+- **thiserror**: 1.0+
+  - Purpose: Custom error types with derive macros
+  - Used for: Domain-specific error types with proper error chaining
 
-- **Version**: `0.24`
-- **Role**: Image Processing.
-- **Why**: The standard library for loading, resizing, and manipulating images in Rust. We use it to load JPEGs from raw bytes and resize them to model input dimensions (e.g., 224x224).
+- **anyhow**: 1.0+
+  - Purpose: Error handling for applications
+  - Used for: High-level error handling in main functions
 
-## Serialization & Config
+### Logging & Observability
+- **tracing**: 0.1+
+  - Purpose: Structured, async-aware logging
+  - Used for: Application logging, request tracing
 
-### `serde` & `serde_json`
+- **tracing-subscriber**: 0.3+
+  - Purpose: Tracing subscriber implementations
+  - Features: `["env-filter"]` for environment-based filtering
+  - Used for: Log formatting and filtering
 
-- **Version**: `1.0`
-- **Role**: Serialization/Deserialization.
-- **Why**: Effectively maps Rust structs to JSON (for API responses) and YAML (for configuration). The `derive` feature automatically generates the code to convert our `PredictRequest` and `PredictResponse` structs.
+- **metrics**: 0.21+
+  - Purpose: Metrics collection interface
+  - Used for: Application metrics collection
 
-### `base64`
+- **metrics-exporter-prometheus**: 0.12+
+  - Purpose: Prometheus metrics exporter
+  - Used for: Metrics exposure in Prometheus format
 
-- **Version**: `0.21`
-- **Role**: Encoding/Decoding.
-- **Why**: ML APIs often receive images as Base64 strings inside JSON payloads rather than multipart uploads. This crate handles the decoding to raw bytes.
+### HTTP Middleware
+- **tower**: 0.4+
+  - Purpose: Service abstraction for async Rust
+  - Features: `["util"]` for utility types
+  - Used for: Middleware implementation
 
-## Observability
+- **tower-http**: 0.5+
+  - Purpose: HTTP-specific tower middleware
+  - Features: `["trace", "cors"]` for tracing and CORS
+  - Used for: Request tracing, HTTP utilities
 
-### `tracing` & `tracing-subscriber`
+## Development Dependencies
 
-- **Version**: `0.1` / `0.3`
-- **Role**: Logging & Instrumentation.
-- **Why**: Instead of messy `println!`, Tracing allows "Structured Logging". We can attach context (like `model_name`) to a span, and all logs within that span automatically inherit it.
+### Testing
+- **tempfile**: 3.0+
+  - Purpose: Temporary file/directory creation
+  - Used for: Unit tests requiring temporary files
+  - Only in dev-dependencies
 
-### `metrics` & `metrics-exporter-prometheus`
+## Dependency Tree
 
-- **Version**: `0.21` / `0.12`
-- **Role**: Metrics Collection.
-- **Why**: Defines a vendor-neutral API for counting events and timing durations. The exporter ships these metrics to a Prometheus-compatible endpoint, essential for production monitoring dashboards.
+```
+cronnx
+├── axum (0.7) - HTTP framework
+│   ├── tokio (1.0) - async runtime
+│   └── serde (1.0) - serialization
+├── ort (2.0) - ONNX Runtime
+│   └── ndarray (0.15) - tensor operations
+├── image (0.24) - image processing
+├── tracing (0.1) - structured logging
+├── metrics (0.21) - metrics collection
+└── thiserror (1.0) - error handling
+```
 
-### `tower` & `tower-http`
+## Optional Features
 
-- **Version**: `0.4` / `0.5`
-- **Role**: Middleware.
-- **Why**: Middleware wraps our HTTP service to add functionality like Timeout, Tracing (logging every request), CORS, and Limiters without touching business logic.
+### GPU Support
+- **ort** with `cuda` feature enables GPU acceleration
+- Adds dependency on CUDA libraries
+- Significantly improves inference performance on supported hardware
 
-## Utilities
+### Development Features
+- **tempfile** only used in tests
+- No runtime dependency in production builds
 
-### `thiserror`
+## Version Management
 
-- **Version**: `1.0`
-- **Role**: Error Definition.
-- **Why**: Makes defining custom `enum` errors (like `InferenceError`) trivial. It works well for libraries or internal modules where you want structured error types.
+### Stability
+- Most dependencies use specific version ranges for stability
+- ONNX Runtime (ort) uses a release candidate version (2.0.0-rc.10)
+- Major versions are locked to prevent breaking changes
 
-### `anyhow`
+### Updates
+- Dependencies should be updated carefully to avoid breaking changes
+- ONNX Runtime updates may require code changes due to API changes
+- Image processing updates may affect normalization behavior
 
-- **Version**: `1.0`
-- **Role**: Error Handling (Application level).
-- **Why**: Used in `main.rs` to handle "any" error that might occur during startup. It provides nice formatting and stack traces for fatal crashes.
+## Security Considerations
+
+### Audit
+- Regular dependency audits recommended
+- Pay attention to security advisories for ONNX Runtime
+- Monitor image processing library for vulnerabilities
+
+### Transitive Dependencies
+- Many dependencies have their own dependency trees
+- Use `cargo tree` to analyze full dependency graph
+- Consider using `cargo-deny` for security checking

@@ -486,7 +486,7 @@ pub fn load_model(model_path: impl AsRef<Path>) -> Result<Session, InferenceErro
         .with_intra_threads(4)? // Parallelism within an op
         .commit_from_file(path)?;
 
-    println!("✓ Loaded model: {}", path.display());
+    println!("Loaded model: {}", path.display());
     // Basic inspection
     for (i, input) in session.inputs.iter().enumerate() {
         println!("  Input {}: {} ({:?})", i, input.name, input.input_type);
@@ -582,7 +582,7 @@ All components include comprehensive unit tests covering success cases, error co
 ### Expected Output
 
 ```text
-✓ Loaded model: models/mobilenetv2-7.onnx
+Loaded model: models/mobilenetv2-7.onnx
   Input 0: input (Float)
 Processing image: data/grace_hopper.jpg
 Preprocessing took: 5.2ms
