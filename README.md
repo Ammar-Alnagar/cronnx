@@ -2,9 +2,7 @@
 
 **Cronnx** is a high-performance, asynchronous Machine Learning inference server built in Rust. It demonstrates how to take a raw ONNX model and serve it via a robust HTTP API with features like dynamic batching, multi-model support, and production observability.
 
-This repository contains a comprehensive step-by-step guide and implementation to build Cronnx from scratch.
-
-## Key Features
+## 🚀 Key Features
 
 - **High Performance**: Low-latency inference using `ort` (ONNX Runtime bindings) and `ndarray`.
 - **Asynchronous Core**: Built on `tokio` and `axum` to handle thousands of concurrent connections.
@@ -13,20 +11,40 @@ This repository contains a comprehensive step-by-step guide and implementation t
 - **Observability**: Built-in Prometheus metrics (`requests`, `latency`, `batch_size`) and structured tracing.
 - **Production Ready**: Dockerized with multi-stage builds and GPU support (CUDA).
 
-## Implementation Guide
+## 📋 Table of Contents
 
-The project is documented in 6 progressive phases. You can find the detailed implementation guides in the `docs/` directory:
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [API Reference](#api-reference)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Development](#development)
 
-| Phase                                            | Description                                                                    | Key Tech                  |
-| ------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------- |
-| [**01_foundation**](docs/01_foundation.md)       | **Core Inference**: Setting up project, ONNX loading, and image preprocessing. | `ort`, `ndarray`, `image` |
-| [**02_async_api**](docs/02_async_api.md)         | **HTTP Server**: Creating an Async Web API with Request/Response DTOs.         | `axum`, `serde`, `tokio`  |
-| [**03_batching**](docs/03_batching.md)           | **Dynamic Batching**: Implementing queue-based batching for high throughput.   | `mpsc`, `tokio::select!`  |
-| [**04_multimodel**](docs/04_multimodel.md)       | **Model Registry**: Supporting multiple models via URL routing.                | `RwLock`, `HashMap`       |
-| [**05_observability**](docs/05_observability.md) | **Metrics & Tracing**: Adding Prometheus metrics and structured logs.          | `tracing`, `metrics`      |
-| [**06_deployment**](docs/06_deployment.md)       | **Prod & GPU**: Dockerization and enabling CUDA acceleration.                  | `Docker`, `CUDA`          |
+## 🏗️ Architecture
 
-## Quick Start
+```mermaid
+graph TD
+    A[HTTP Client] --> B[Axum Router]
+    B --> C[Model Registry]
+    C --> D[Batching System]
+    D --> E[ONNX Runtime]
+    E --> F[Response Queue]
+    F --> B
+    G[Prometheus] --> H[Metrics Endpoint]
+    H --> B
+    I[Tracing] --> J[Structured Logs]
+```
+
+### Core Components
+
+1. **Server Layer**: HTTP API using Axum with request/response DTOs
+2. **Model Registry**: Thread-safe registry mapping model names to batching queues
+3. **Batching System**: Dynamic request batching with configurable timeout and size
+4. **Preprocessing**: Image normalization using ImageNet statistics
+5. **Observability**: Metrics collection and structured logging
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
@@ -35,14 +53,14 @@ The project is documented in 6 progressive phases. You can find the detailed imp
 
 ### Running the Server
 
-1.  **Download Model**:
+1. **Download Model**:
 
     ```bash
     mkdir -p models
     wget https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-7.onnx -O models/mobilenetv2-7.onnx
     ```
 
-2.  **Configuration**:
+2. **Configuration**:
     Create a `config.yaml` file:
 
     ```yaml
@@ -54,15 +72,19 @@ The project is documented in 6 progressive phases. You can find the detailed imp
         path: "models/mobilenetv2-7.onnx"
         batch_size: 16
         batch_timeout_ms: 10
+      - name: "mobilenet_backup"
+        path: "models/mobilenetv2-7.onnx"
+        batch_size: 8
+        batch_timeout_ms: 20
     ```
 
-3.  **Run**:
+3. **Run**:
 
     ```bash
     cargo run --release
     ```
 
-4.  **Test Inference**:
+4. **Test Inference**:
     ```bash
     # POST a base64 encoded image
     IMAGE=$(base64 -w 0 data/test_image.jpg)
@@ -71,14 +93,128 @@ The project is documented in 6 progressive phases. You can find the detailed imp
          -d "{\"image\": \"$IMAGE\"}"
     ```
 
-##  Project Structure
+5. **Check Metrics**:
+    ```bash
+    curl http://localhost:3000/metrics
+    ```
+
+## 📡 API Reference
+
+### Health Check
+```
+GET /health
+```
+Returns "OK" if the server is running.
+
+### Model Prediction
+```
+POST /predict/{model_name}
+```
+
+**Request Body:**
+```json
+{
+  "image": "base64_encoded_image_data"
+}
+```
+
+**Response:**
+```json
+{
+  "predictions": [
+    {
+      "class_id": 282,
+      "confidence": 0.9876
+    }
+  ],
+  "inference_time_ms": 45.2
+}
+```
+
+### Metrics Endpoint
+```
+GET /metrics
+```
+Returns Prometheus-formatted metrics.
+
+## ⚙️ Configuration
+
+The application is configured via `config.yaml`:
+
+```yaml
+server:
+  port: 3000          # Server port
+  host: "0.0.0.0"     # Server host
+
+models:
+  - name: "model_name"        # Unique model identifier
+    path: "path/to/model.onnx" # Path to ONNX model file
+    batch_size: 16            # Maximum batch size
+    batch_timeout_ms: 10      # Batch timeout in milliseconds
+```
+
+## 🧪 Testing
+
+Run the comprehensive test suite:
+
+```bash
+# Run all tests
+cargo test
+
+# Run specific test modules
+cargo test error
+cargo test preprocessing  
+cargo test batching
+cargo test server
+```
+
+### Test Coverage
+
+- **Unit Tests**: Individual module validation
+- **Integration Tests**: Cross-module interaction verification
+- **End-to-End Tests**: Complete system flow validation
+- **Error Handling**: All error paths tested
+- **Concurrency**: Thread safety and async behavior
+
+## 🚢 Deployment
+
+### Docker
+
+Build and run with Docker:
+
+```bash
+# Build the image
+docker build -t cronnx:latest .
+
+# Run with models volume
+docker run -p 3000:3000 -v ./models:/app/models cronnx:latest
+```
+
+### GPU Support
+
+To enable GPU acceleration, add the CUDA feature to the ORT dependency:
+
+```toml
+ort = { version = "2.0.0-rc.10", features = ["ndarray", "cuda"] }
+```
+
+### Production Considerations
+
+- Use production-grade ONNX models
+- Configure appropriate batch sizes for your hardware
+- Set up proper logging and monitoring
+- Use reverse proxy (nginx) for production deployments
+
+## 🛠️ Development
+
+### Project Structure
 
 ```
 cronnx/
 ├── Cargo.toml          # Dependencies
 ├── config.yaml         # App Configuration
-├── docs/               # The Implementation Guides
-├── models/             # Directory for .onnx files
+├── Dockerfile          # Container build
+├── docs/               # Documentation
 └── src/
     ├── main.rs         # Entry point & setup
     ├── config.rs       # Config structs
@@ -89,6 +225,30 @@ cronnx/
     └── preprocessing/  # Image resizing & normalization
 ```
 
-##  License
+### Building
+
+```bash
+# Development build
+cargo build
+
+# Release build
+cargo build --release
+
+# Format code
+cargo fmt
+
+# Check for linting issues
+cargo clippy
+```
+
+## 📊 Metrics
+
+The following metrics are collected:
+
+- `requests_received` (counter): Number of requests by model
+- `request_latency_seconds` (histogram): Request processing time by model  
+- `batch_size` (histogram): Size of processed batches
+
+## 🏷️ License
 
 MIT

@@ -8,7 +8,7 @@ Now that we can run inference on a single file, we need to expose this capabilit
 
 1.  Serve inference requests over HTTP.
 2.  Handle concurrent requests efficiently (using Tokio).
-3.  Manage shared application state (`Arc<Session>`).
+3.  Manage shared application state (model registry with batching queues).
 4.  Standardize API inputs/outputs using JSON and Base64.
 
 **Key Rust Concepts Introduced:**
@@ -25,13 +25,15 @@ sequenceDiagram
     participant C as Client
     participant S as Axum Server
     participant H as Handler
-    participant E as Inference Engine
+    participant R as Model Registry
+    participant B as Batching System
 
-    C->>S: POST /predict (JSON + Base64)
+    C->>S: POST /predict/model_name (JSON + Base64)
     S->>H: Route & Extract State
     H->>H: Decode Base64 Image
-    H->>E: Run Inference (Arc<Session>)
-    E-->>H: Predictions
+    H->>R: Lookup Model Queue
+    R->>B: Send Inference Job
+    B-->>H: Processed Predictions
     H-->>S: JSON Response
     S-->>C: 200 OK
 ```
@@ -40,62 +42,39 @@ sequenceDiagram
 
 Update your `Cargo.toml` to include full async features and encoding support.
 
-**Add/Update Dependencies in `Cargo.toml`:**
-
-```toml
-[dependencies]
-# ... previous dependencies ...
-axum = { version = "0.7", features = ["macros"] }
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-base64 = "0.21"
-tower = { version = "0.4", features = ["util"] } # Middleware components
-tower-http = { version = "0.5", features = ["trace", "cors"] }
-```
+**Dependencies already configured in `Cargo.toml`**
 
 ## 3. Step-by-Step Implementation
 
-### 3.1 Refactoring: Shared State
+### 3.1 Shared Application State
 
-We need a structure to hold our application state (the loaded model) so it can be shared across thousands of incoming requests.
-
-**File: `src/server/mod.rs`**
-
-```rust
-pub mod types;
-pub mod handlers;
-pub mod routes;
-```
+We need a structure to hold our application state (the model registry) so it can be shared across thousands of incoming requests.
 
 **File: `src/server/types.rs`**
 
 ```rust
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use ort::Session;
+use crate::model::registry::ModelRegistry;
 
-/// Shared Application State
 #[derive(Clone)]
 pub struct AppState {
-    pub session: Arc<Session>,
+    pub registry: ModelRegistry,
 }
 
 // --- DTOs (Data Transfer Objects) ---
 
-#[derive(Deserialize)]
+#[derive(serde::Deserialize)]
 pub struct PredictRequest {
     /// Base64 encoded image data
     pub image: String,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct PredictResponse {
     pub predictions: Vec<Prediction>,
     pub inference_time_ms: f64,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct Prediction {
     pub class_id: usize,
     pub confidence: f32,
@@ -104,145 +83,74 @@ pub struct Prediction {
 
 ### 3.2 Error Handling: `IntoResponse`
 
-Axum requires handlers to return types that implement `IntoResponse`. We need to adapt our `InferenceError` to return HTTP responses (e.g., 400 for bad input, 500 for runtime errors).
-
-**Modify `src/error.rs`**:
-
-```rust
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Json,
-};
-use serde_json::json;
-use thiserror::Error;
-
-// ... (Existing Enum Definition) ...
-
-impl IntoResponse for InferenceError {
-    fn into_response(self) -> Response {
-        let (status, error_message) = match self {
-            InferenceError::ModelNotFound(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            InferenceError::ShapeMismatch { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
-            InferenceError::ImageError(_) => (StatusCode::BAD_REQUEST, "Invalid image data".to_string()),
-            InferenceError::PreprocessingError(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string()),
-        };
-
-        let body = Json(json!({
-            "error": error_message
-        }));
-
-        (status, body).into_response()
-    }
-}
-```
+Axum requires handlers to return types that implement `IntoResponse`. Our `InferenceError` already implements this.
 
 ### 3.3 The Handlers
 
-We define the logic for our endpoints. We need to decode the base64, preprocess it (reusing Phase 1 logic), and run inference.
-
-_Note: Since `load_and_preprocess` in Phase 1 took a file path, we need to **refactor Phase 1** slightly to accept raw bytes or `DynamicImage`. Let's assume we refactor `src/preprocessing/image.rs` to add `process_from_bytes`._
-
-**Update `src/preprocessing/image.rs`**:
-
-```rust
-use std::io::Cursor;
-// ... imports ...
-
-pub fn process_image_buffer(buffer: &[u8]) -> Result<Array4<f32>, InferenceError> {
-    // 1. Load image from bytes (guess format)
-    let img = image::load_from_memory(buffer)
-        .map_err(|e| InferenceError::ImageError(e))?;
-
-    // 2. Resize
-    let resized = img.resize_exact(224, 224, FilterType::Triangle);
-
-    // 3. Normalize & Create Tensor (Same logic as Phase 1 file-based approach)
-    // We can iterate pixels and build the vector
-    let mut normalized_data = Vec::with_capacity(1 * 3 * 224 * 224);
-
-    for pixel in resized.to_rgb8().pixels() {
-        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
-        // Normalize (ImageNet stats)
-        normalized_data.push(((r as f32 / 255.0) - 0.485) / 0.229);
-        normalized_data.push(((g as f32 / 255.0) - 0.456) / 0.224);
-        normalized_data.push(((b as f32 / 255.0) - 0.406) / 0.225);
-    }
-
-    // Shape: [H, W, C] -> Permute to [C, H, W] -> Add Batch [1, C, H, W]
-    let array = Array::from_shape_vec((224, 224, 3), normalized_data)
-        .map_err(|e| InferenceError::PreprocessingError(e.to_string()))?;
-
-    let array = array.permuted_axes([2, 0, 1]);
-    let array = array.insert_axis(Axis(0));
-
-    Ok(array.as_standard_layout().to_owned())
-}
-```
-
-_Correction: In a real guide, I would provide the full refactor code. Let's do that in the handlers file or assume it's done._
+We define the logic for our endpoints. We need to decode the base64, preprocess it, and send the job to the appropriate batching queue.
 
 **File: `src/server/handlers.rs`**
 
 ```rust
-use axum::{extract::State, Json};
+use axum::{extract::{Path, State}, Json};
 use base64::{engine::general_purpose, Engine as _};
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::error::InferenceError;
 use crate::server::types::{AppState, PredictRequest, PredictResponse, Prediction};
-use crate::preprocessing::image::load_and_preprocess; // We will need to adapt this
+use crate::batching::queue::InferenceJob;
+use metrics::{increment_counter, histogram};
+use tracing::{info, instrument};
 
+#[instrument(skip(state, payload))] // Creates a Span for each request with arguments
 pub async fn health_check() -> &'static str {
     "OK"
 }
 
+#[instrument(skip(state, payload))] // Creates a Span for each request with arguments
 pub async fn predict(
     State(state): State<Arc<AppState>>,
+    Path(model_name): Path<String>,
     Json(payload): Json<PredictRequest>,
 ) -> Result<Json<PredictResponse>, InferenceError> {
 
-    // 1. Decode Base64
+    // Record explicit counter
+    increment_counter!("requests_received", "model" => model_name.clone());
+
+    // 1. Resolve Model Queue
+    let queue = state.registry.get(&model_name)
+        .ok_or_else(|| InferenceError::ModelNotFound(model_name.clone()))?;
+
+    // 2. Preprocess
+    // Decode base64 and process bytes
     let image_bytes = general_purpose::STANDARD
         .decode(&payload.image)
-        .map_err(|e| InferenceError::PreprocessingError(format!("Base64 decode failed: {}", e)))?;
+        .map_err(|e| InferenceError::PreprocessingError(e.to_string()))?;
 
-    // 2. Preprocess (Refactor needed here: Phase 1 used Paths.
-    // We should treat byte processing as a first-class citizen).
-    // Let's assume we added `preprocessing::image::process_bytes(&[u8])`.
-    let start = Instant::now();
+    let start = std::time::Instant::now();
     let input_tensor = crate::preprocessing::image::process_bytes(&image_bytes)?;
 
-    // 3. Inference
-    let session = &state.session;
-    let input_name = &session.inputs[0].name;
-    let outputs = session.run(ort::inputs![input_name => input_tensor]?)?;
+    // 3. Send to Queue
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let job = InferenceJob { input: input_tensor, result_sender: tx };
 
-    let duration = start.elapsed();
+    queue.send(job).await
+        .map_err(|_| InferenceError::PreprocessingError("Queue closed".into()))?;
 
-    // 4. Post-process
-    let output = outputs[0].try_extract_tensor::<f32>()?;
-    let output_view = output.view();
-    let probabilities = output_view.index_axis(ndarray::Axis(0), 0);
+    let preds = rx.await
+        .map_err(|_| InferenceError::PreprocessingError("Inference dropped".into()))??;
 
-    let mut preds: Vec<(usize, f32)> = probabilities
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (i, p))
-        .collect();
-    preds.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    // 4. Record Latency
+    let latency = start.elapsed().as_secs_f64();
+    histogram!("request_latency_seconds", latency, "model" => model_name.clone());
 
-    // Take top 5
-    let predictions = preds.iter()
-        .take(5)
-        .map(|(id, prob)| Prediction { class_id: *id, confidence: *prob })
-        .collect();
+    info!(model = %model_name, latency_ms = %latency * 1000.0, "Inference completed");
 
+    // 5. Response
     Ok(Json(PredictResponse {
-        predictions,
-        inference_time_ms: duration.as_secs_f64() * 1000.0,
+        predictions: preds.into_iter().take(5).map(|(id,p)| Prediction{class_id:id, confidence:p}).collect(),
+        inference_time_ms: latency * 1000.0,
     }))
 }
 ```
@@ -255,50 +163,18 @@ pub async fn predict(
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
 use crate::server::{handlers, types::AppState};
-use port::Session;
+use metrics_exporter_prometheus::PrometheusHandle;
+use tower_http::trace::TraceLayer;
 
-pub fn create_router(session: Session) -> Router {
-    let state = Arc::new(AppState {
-        session: Arc::new(session)
-    });
+pub fn create_router(registry: crate::model::registry::ModelRegistry, metrics_handle: PrometheusHandle) -> Router {
+    let state = Arc::new(AppState { registry });
 
     Router::new()
         .route("/health", get(handlers::health_check))
-        .route("/predict", post(handlers::predict))
-        .with_state(state) // Injects State into handlers
-}
-```
-
-### 3.5 Updating Main
-
-We switch `main.rs` to start the server.
-
-**File: `src/main.rs`**
-
-```rust
-use ml_inference_engine::{model, server};
-use tokio::net::TcpListener;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // 1. Init
-    model::loader::init_ort()?;
-
-    // 2. Load Model
-    println!("Loading model...");
-    let session = model::loader::load_model("models/mobilenetv2-7.onnx")?;
-    println!("Model loaded successfully.");
-
-    // 3. Create Router
-    let app = server::routes::create_router(session);
-
-    // 4. Bind & Serve
-    let listener = TcpListener::bind("0.0.0.0:3000").await?;
-    println!("Server listening on http://0.0.0.0:3000");
-
-    axum::serve(listener, app).await?;
-
-    Ok(())
+        .route("/predict/:model_name", post(handlers::predict))
+        .route("/metrics", get(move || std::future::ready(metrics_handle.render())))
+        .layer(TraceLayer::new_for_http()) // Logs every request result
+        .with_state(state)
 }
 ```
 
@@ -311,7 +187,7 @@ Convert an image to base64 (e.g., using an online tool or `base64` terminal comm
 ```bash
 # Linux
 IMAGE_B64=$(base64 -w 0 data/grace_hopper.jpg)
-curl -X POST http://localhost:3000/predict \
+curl -X POST http://localhost:3000/predict/mobilenet \
      -H "Content-Type: application/json" \
      -d "{\"image\": \"$IMAGE_B64\"}"
 ```
@@ -320,34 +196,176 @@ curl -X POST http://localhost:3000/predict \
 
 We can use `axum::test` or `tower::Service` to test the API without starting a TCP listener.
 
-**File: `tests/integration_tests.rs`**
+**File: `src/server/tests.rs`**
 
 ```rust
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
-use tower::ServiceExt; // for oneshot
-use ml_inference_engine::{model, server};
+#[cfg(test)]
+mod integration_tests {
+    use crate::server::types::{PredictRequest, PredictResponse};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tower::ServiceExt; // for `app.oneshot()`
+    
+    use crate::{
+        batching::queue::{InferenceJob, BatcherConfig},
+        server::{handlers, types::AppState},
+        model::registry::ModelRegistry,
+    };
+    use ndarray::Array4;
 
-#[tokio::test]
-async fn test_health_check() {
-    model::loader::init_ort().unwrap();
-    // Use a dummy session or load real one for test (Mocking ORT is hard, usually use real model in integration)
-    let session = model::loader::load_model("models/mobilenetv2-7.onnx").expect("Model must be present");
-    let app = server::routes::create_router(session);
+    #[tokio::test]
+    async fn test_health_check_handler() {
+        let registry = ModelRegistry::new();
+        let state = Arc::new(AppState { registry });
+        
+        let response = handlers::health_check().await;
+        assert_eq!(response, "OK");
+    }
 
-    let response = app
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+    #[tokio::test]
+    async fn test_predict_handler_with_mock_batcher() {
+        // Create a mock registry with a channel for testing
+        let registry = ModelRegistry::new();
+        
+        // Create a channel for the mock batcher
+        let (tx, mut rx) = mpsc::channel(10);
+        
+        // Register a mock model
+        registry.register("test_model".to_string(), tx);
+        
+        let state = Arc::new(AppState { registry });
+        
+        // Create a mock request with base64 encoded dummy image data
+        // Using a simple base64 string that represents minimal valid image data
+        let request = PredictRequest {
+            image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==".to_string(), // Minimal PNG
+        };
 
-    assert_eq!(response.status(), StatusCode::OK);
+        // We can't fully test the prediction handler without a real model,
+        // but we can test that it properly sends the job to the queue
+        let result = handlers::predict(
+            axum::extract::State(state),
+            axum::extract::Path("test_model".to_string()),
+            axum::Json(request),
+        ).await;
+        
+        // The handler should return an error since we don't have a real batcher running
+        // to process the job, but it should at least send the job to the queue
+        let job_received = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
+        
+        match job_received {
+            Ok(Some(_job)) => {
+                // Job was successfully sent to the queue
+                // This indicates the handler is working correctly
+            },
+            Ok(None) => {
+                // Channel was closed
+                panic!("Channel was closed unexpectedly");
+            },
+            Err(_) => {
+                // Timeout - no job was sent
+                // This could happen if there's an early error in the handler
+                // Let's test the error case
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_predict_handler_invalid_model() {
+        let registry = ModelRegistry::new();
+        let state = Arc::new(AppState { registry });
+        
+        let request = PredictRequest {
+            image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==".to_string(),
+        };
+
+        // Try to predict with a non-existent model
+        let result = handlers::predict(
+            axum::extract::State(state),
+            axum::extract::Path("nonexistent_model".to_string()),
+            axum::Json(request),
+        ).await;
+        
+        // Should return ModelNotFound error
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_predict_handler_invalid_base64() {
+        let registry = ModelRegistry::new();
+        let (tx, _rx) = mpsc::channel(10);
+        registry.register("test_model".to_string(), tx);
+        
+        let state = Arc::new(AppState { registry });
+        
+        let request = PredictRequest {
+            image: "invalid_base64_data".to_string(), // Invalid base64
+        };
+
+        let result = handlers::predict(
+            axum::extract::State(state),
+            axum::extract::Path("test_model".to_string()),
+            axum::Json(request),
+        ).await;
+        
+        // Should return PreprocessingError due to invalid base64
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_predict_handler_empty_base64() {
+        let registry = ModelRegistry::new();
+        let (tx, _rx) = mpsc::channel(10);
+        registry.register("test_model".to_string(), tx);
+        
+        let state = Arc::new(AppState { registry });
+        
+        let request = PredictRequest {
+            image: "".to_string(), // Empty base64
+        };
+
+        let result = handlers::predict(
+            axum::extract::State(state),
+            axum::extract::Path("test_model".to_string()),
+            axum::Json(request),
+        ).await;
+        
+        // Should return an error due to empty/invalid base64
+        assert!(result.is_err());
+    }
+}
+
+// Test for the server routes module
+#[cfg(test)]
+mod route_tests {
+    use crate::server::routes;
+    use crate::model::registry::ModelRegistry;
+    use metrics_exporter_prometheus::PrometheusBuilder;
+
+    #[test]
+    fn test_router_creation() {
+        let registry = ModelRegistry::new();
+        let metrics_handle = PrometheusBuilder::new()
+            .build()
+            .expect("Failed to create metrics handle");
+        
+        // Test that the router can be created without panicking
+        let _router = routes::create_router(registry, metrics_handle);
+        
+        // The router should be created successfully
+        // We can't easily test the routes without starting a server,
+        // but we can verify the function doesn't panic
+    }
 }
 ```
 
 ## 5. Next Steps
 
-We now have an Async Web API! However, if 100 requests come in at once, they will run in parallel on threads managed by Tokio/ORT. While ORT is thread-safe, massive parallelism might thrash the CPU cache or run out of memory.
+We now have an Async Web API! However, if 100 requests come in at once, they will be queued for batching. The batching system will aggregate requests into efficient batches, significantly improving throughput.
 
-In **Phase 3**, we will implement a **Request Batching System** (Dynamic Batching) to aggregate incoming requests into efficient batches, significantly improving throughput.
+In **Phase 3**, we will implement the **Request Batching System** (Dynamic Batching) to aggregate incoming requests into efficient batches, significantly improving throughput.

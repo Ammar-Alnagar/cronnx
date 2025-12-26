@@ -1,6 +1,43 @@
 [package]
 name = "cronnx"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+# Web Framework
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1.0", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+base64 = "0.21"
+
+# ML & Math
+ort = { version = "2.0.0-rc.10", features = ["ndarray"] }
+ndarray = "0.15"
+
+# Image Processing
+image = "0.24"
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging & Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
+
+# HTTP Middleware
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+
+[dev-dependencies]
+tempfile = "3.0"
+
+[profile.release]
+lto = true
+codegen-units = 1

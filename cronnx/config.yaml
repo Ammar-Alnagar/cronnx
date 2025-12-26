@@ -1,0 +1,25 @@
+server:
+  port: 3000
+  host: "0.0.0.0"
+
+models:
+  - task_type: "ImageClassification"
+    name: "mobilenet_v2"
+    path: "models/mobilenetv2-7.onnx"
+    batch_size: 16
+    batch_timeout_ms: 5
+  - task_type: "TextGeneration"
+    name: "text_generator"
+    path: "models/mobilenetv2-7.onnx"
+    batch_size: 1
+    batch_timeout_ms: 10
+  - task_type: "TextClassification"
+    name: "text_classifier"
+    path: "models/mobilenetv2-7.onnx"
+    batch_size: 16
+    batch_timeout_ms: 5
+  - task_type: "TextEmbedding"
+    name: "text_embedder"
+    path: "models/mobilenetv2-7.onnx"
+    batch_size: 16
+    batch_timeout_ms: 5

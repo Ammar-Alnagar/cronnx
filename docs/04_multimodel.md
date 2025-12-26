@@ -107,6 +107,137 @@ impl ModelRegistry {
         map.get(name).cloned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array4;
+
+    #[test]
+    fn test_registry_creation() {
+        let registry = ModelRegistry::new();
+        assert!(registry.queues.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_registry_register_and_get() {
+        let registry = ModelRegistry::new();
+        
+        // Create a channel for testing
+        let (tx, _rx) = mpsc::channel(10);
+        
+        // Register a model
+        registry.register("model1".to_string(), tx);
+        
+        // Verify the model was registered
+        assert!(registry.get("model1").is_some());
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_registry_multiple_models() {
+        let registry = ModelRegistry::new();
+        
+        // Create multiple channels
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+        
+        // Register multiple models
+        registry.register("model1".to_string(), tx1);
+        registry.register("model2".to_string(), tx2);
+        
+        // Verify both models are registered
+        assert!(registry.get("model1").is_some());
+        assert!(registry.get("model2").is_some());
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_registry_overwrite() {
+        let registry = ModelRegistry::new();
+        
+        // Create channels
+        let (tx1, _rx1) = mpsc::channel(10);
+        let (tx2, _rx2) = mpsc::channel(10);
+        
+        // Register first model
+        registry.register("model1".to_string(), tx1);
+        assert!(registry.get("model1").is_some());
+        
+        // Overwrite with new model
+        registry.register("model1".to_string(), tx2);
+        assert!(registry.get("model1").is_some());
+    }
+
+    #[test]
+    fn test_registry_concurrent_access() {
+        let registry = ModelRegistry::new();
+        
+        // Register a model
+        let (tx, _rx) = mpsc::channel(10);
+        registry.register("test_model".to_string(), tx);
+        
+        // Test concurrent read access
+        let registry_clone = registry.clone();
+        let handle = std::thread::spawn(move || {
+            for i in 0..100 {
+                let _sender = registry_clone.get(&format!("test_model"));
+            }
+        });
+        
+        // Do some other operations in main thread
+        for i in 0..50 {
+            let _sender = registry.get("test_model");
+        }
+        
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_registry_clone() {
+        let registry1 = ModelRegistry::new();
+        let (tx, _rx) = mpsc::channel(10);
+        registry1.register("model1".to_string(), tx);
+        
+        // Clone the registry
+        let registry2 = registry1.clone();
+        
+        // Both should have access to the same model
+        assert!(registry1.get("model1").is_some());
+        assert!(registry2.get("model1").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_registry_with_real_job() {
+        let registry = ModelRegistry::new();
+        
+        // Create a channel and send a real job through it
+        let (tx, mut rx) = mpsc::channel(10);
+        registry.register("test_model".to_string(), tx);
+        
+        // Create a dummy tensor and sender for the job
+        let dummy_tensor = Array4::<f32>::zeros((1, 3, 224, 224));
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        
+        let job = InferenceJob {
+            input: dummy_tensor,
+            result_sender: result_tx,
+        };
+        
+        // Get the sender from registry and send the job
+        if let Some(sender) = registry.get("test_model") {
+            let send_result = sender.send(job).await;
+            assert!(send_result.is_ok());
+        } else {
+            panic!("Model not found in registry");
+        }
+        
+        // The job should be received by the receiver
+        let received_job = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
+        assert!(received_job.is_ok());
+        assert!(received_job.unwrap().is_some());
+    }
+}
 ```
 
 ### 3.3 Updating Handlers
@@ -209,7 +340,7 @@ models:
 
 ```rust
 use std::fs;
-use ml_inference_engine::{config::AppConfig, model, batching};
+use cronnx::{config::AppConfig, model, batching};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -244,7 +375,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 3. Serve
-    let app = ml_inference_engine::server::routes::create_router(registry);
+    let app = cronnx::server::routes::create_router(registry);
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", config.server.host, config.server.port)).await?;
     axum::serve(listener, app).await?;
 
